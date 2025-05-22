@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Painel</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='estilo.css') }}">
+  <!-- Select2 CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet" />
+  <style>
+    /* Ajuste pequeno para o container de horários */
+    .horarios-container > div {
+      margin-top: 6px;
+      border-top: 1px solid #ddd;
+      padding-top: 4px;
+    }
+    .horarios-container strong {
+      font-size: 0.9rem;
+    }
+    .horarios-container input[type="time"] {
+      margin-left: 6px;
+      margin-right: 12px;
+    }
+    .topo-direita {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+    }
+    .btn-sair {
+      background-color: #1f4e79;
+      color: white;
+      border: none;
+      padding: 8px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 600;
+      transition: background-color 0.3s ease;
+    }
+    .btn-sair:hover {
+      background-color: #174364;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="topo-direita">
+    <form action="{{ url_for('logout') }}" method="get" style="display:inline;">
+      <button type="submit" class="btn-sair">Sair</button>
+    </form>
+  </div>
+
+  <div class="panel-container">
+    <h2>Painel de Atividades</h2>
+    <h3>Mês: {{ nome_mes | capitalize }}</h3>
+
+    <!-- Formulário para adicionar nova opção -->
+    <form id="form-add-atividade" style="margin-bottom: 20px;">
+      <input type="text" id="nova-atividade" placeholder="Nova Atividade" required>
+      <button type="submit" type="button">Adicionar Atividade</button>
+    </form>
+
+    <form id="form-painel" method="POST">
+      <table>
+        <thead>
+          <tr>
+            <th>Data</th>
+            <th>Dia da Semana</th>
+            <th>Atividades (selecione várias)</th>
+            <th>Horários das Atividades</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in datas %}
+          <tr>
+            <td>{{ item.dia }}</td>
+            <td>{{ item.dia_semana }}</td>
+            <td>
+              <select name="atividade_{{ item.dia }}" multiple size="4" style="width: 200px;">
+                {% for opcao in opcoes %}
+                  <option value="{{ opcao }}">{{ opcao }}</option>
+                {% endfor %}
+              </select>
+            </td>
+            <td>
+              <div class="horarios-container" data-dia="{{ item.dia }}"></div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <button type="submit" style="margin-top: 20px;">Gerar Relatório</button>
+    </form>
+  </div>
+
+  <!-- jQuery e Select2 JS -->
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
+
+  <script>
+    $(document).ready(function() {
+      // Inicializa Select2 nos selects de atividade
+      $('select[name^="atividade_"]').select2({
+        placeholder: "Selecione uma ou mais atividades",
+        allowClear: true,
+        width: '200px'
+      });
+
+      // Quando a seleção muda, atualiza os campos de horário para cada atividade
+      $('select[name^="atividade_"]').on('change', function() {
+        const dia = $(this).attr('name').split('_')[1];
+        const container = $('.horarios-container[data-dia="' + dia + '"]');
+        container.empty();
+
+        const selecionadas = $(this).val() || [];
+
+        selecionadas.forEach((atividade, idx) => {
+          const html = `
+            <div>
+              <strong>${atividade}</strong><br/>
+              Início: <input type="time" name="hora_inicio_${dia}_${idx}" required>
+              Fim: <input type="time" name="hora_fim_${dia}_${idx}" required>
+            </div>
+          `;
+          container.append(html);
+        });
+      });
+
+      // Quando o usuário adicionar nova atividade, adiciona nas listas e atualiza Select2
+      document.getElementById('form-add-atividade').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const novaAtividade = document.getElementById('nova-atividade').value.trim();
+        if (!novaAtividade) return;
+
+        document.querySelectorAll('select[name^="atividade_"]').forEach(select => {
+          // Verifica se a opção já existe
+          if (![...select.options].some(opt => opt.value === novaAtividade)) {
+            const option = new Option(novaAtividade, novaAtividade, false, false);
+            $(select).append(option).trigger('change');
+          }
+        });
+
+        // Limpa o campo de texto
+        document.getElementById('nova-atividade').value = '';
+      });
+
+      // Dados vindos do backend para submissão
+      const datas = JSON.parse('{{ datas | tojson | safe }}');
+
+      document.getElementById('form-painel').addEventListener('submit', function(e) {
+        e.preventDefault();
+
+        const dados = [];
+
+        datas.forEach(item => {
+          const dia = item.dia;
+          const select = document.querySelector(`select[name="atividade_${dia}"]`);
+          const selecionadas = Array.from(select.selectedOptions).map(opt => opt.value);
+
+          selecionadas.forEach((atividade, idx) => {
+            const hora_inicio = document.querySelector(`input[name="hora_inicio_${dia}_${idx}"]`)?.value || '';
+            const hora_fim = document.querySelector(`input[name="hora_fim_${dia}_${idx}"]`)?.value || '';
+
+            dados.push({
+              dia,
+              atividade,
+              hora_inicio,
+              hora_fim
+            });
+          });
+        });
+
+        fetch('/gerar_excel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(dados)
+        })
+        .then(response => {
+          if (!response.ok) throw new Error("Erro ao gerar Excel");
+          return response.blob();
+        })
+        .then(blob => {
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'relatorio.xlsx';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          window.URL.revokeObjectURL(url);
+        })
+        .catch(error => alert(error));
+      });
+    });
+  </script>
+</body>
+</html>
